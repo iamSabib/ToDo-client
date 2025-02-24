@@ -7,6 +7,8 @@ import {
   useSensor,
   useSensors,
   DragOverlay,
+  TouchSensor,
+  MouseSensor,
 } from '@dnd-kit/core';
 import {
   arrayMove,
@@ -19,62 +21,80 @@ import Column from './assets/components/Column';
 import { createPortal } from 'react-dom';
 
 function App() {
-  // Store full task objects
+  // State for tasks in each column with dummy data
   const [activeItem, setActiveItem] = useState(null);
-  const [boxA, setBoxA] = useState([
-    { id: '1', title: 'Task 1', category: 'A' },
-    { id: '2', title: 'Task 2', category: 'A' },
-    { id: '3', title: 'Task 3', category: 'A' },
+  const [todo, setTodo] = useState([
+    { id: '1', title: 'Task 1', category: 'todo' },
+    { id: '2', title: 'Task 2', category: 'todo' },
+    { id: '3', title: 'Task 3', category: 'todo' },
   ]);
-  const [boxB, setBoxB] = useState([
-    { id: '4', title: 'Task 4', category: 'B' },
-    { id: '5', title: 'Task 5', category: 'B' },
+  const [inprogress, setInprogress] = useState([
+    { id: '4', title: 'Task 4', category: 'inprogress' },
+    { id: '5', title: 'Task 5', category: 'inprogress' },
+  ]);
+  const [done, setDone] = useState([
+    { id: '6', title: 'Task 6', category: 'done' },
+    { id: '7', title: 'Task 7', category: 'done' },
   ]);
 
-  // Derive id arrays for each box to pass to SortableContext
-  const boxAIds = useMemo(() => boxA.map(item => item.id), [boxA]);
-  const boxBIds = useMemo(() => boxB.map(item => item.id), [boxB]);
+  // Memoized task IDs for each column
+  const todoIds = useMemo(() => todo.map(item => item.id), [todo]);
+  const inprogressIds = useMemo(() => inprogress.map(item => item.id), [inprogress]);
+  const doneIds = useMemo(() => done.map(item => item.id), [done]);
 
+  // DnD Sensors Setup
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    // useSensor(PointerSensor,{
+    //   activationConstraint: {
+    //     distance: 10,
+    //   },
+    // }),
+    useSensor(MouseSensor, {
+      // Require the mouse to move by 10 pixels before activating
+      activationConstraint: {
+        distance: 10,
+      },
+    }),
+    //sensor for touch devices
+    useSensor(TouchSensor, {
+      // Press delay of 250ms, with tolerance of 5px of movement
+      activationConstraint: {
+        delay: 150,
+        tolerance: 5,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
 
-  // Helper: find task by id from both boxes
+  // Helper functions to find tasks and reorder them
   const findTaskById = (id) => {
-    return boxA.find(item => item.id === id) || boxB.find(item => item.id === id);
+    return [...todo, ...inprogress, ...done].find(item => item.id === id);
   };
 
-  // Helper: reorder items within the same box
-  const reorderWithinBox = (box, setBox, activeId, overId) => {
-    const activeIndex = box.findIndex(item => item.id === activeId);
-    const overIndex = box.findIndex(item => item.id === overId);
-    const nextItems = arrayMove(box, activeIndex, overIndex);
-    setBox(nextItems);
+  const reorderWithinColumn = (column, setColumn, activeId, overId) => {
+    const activeIndex = column.findIndex(item => item.id === activeId);
+    const overIndex = column.findIndex(item => item.id === overId);
+    const reordered = arrayMove(column, activeIndex, overIndex);
+    setColumn(reordered);
   };
 
-  // Helper: move item between boxes with updated category
-  const moveBetweenBoxes = (
-    sourceBox,
-    setSourceBox,
-    targetBox,
-    setTargetBox,
-    activeId,
-    overId,
-    newCategory
+  const moveTaskBetweenColumns = (
+    sourceColumn, setSourceColumn, targetColumn, setTargetColumn,
+    activeId, overId, newCategory
   ) => {
-    const activeIndex = sourceBox.findIndex(item => item.id === activeId);
-    const task = sourceBox[activeIndex];
+    const activeIndex = sourceColumn.findIndex(item => item.id === activeId);
+    if (activeIndex === -1) return;
+    const task = sourceColumn[activeIndex];
     const updatedTask = { ...task, category: newCategory };
 
-    // Remove the item from source box
-    setSourceBox(prev => prev.filter(item => item.id !== activeId));
+    // Remove task from source column
+    setSourceColumn(prev => prev.filter(item => item.id !== activeId));
 
-    // Insert into target box at correct position; if overId not found, add at the end
-    const overIndex = targetBox.findIndex(item => item.id === overId);
-    setTargetBox(prev => {
+    // Add task to the target column
+    const overIndex = targetColumn.findIndex(item => item.id === overId);
+    setTargetColumn(prev => {
       const next = [...prev];
       if (overIndex === -1) {
         next.push(updatedTask);
@@ -85,45 +105,74 @@ function App() {
     });
   };
 
-  // When dragging starts, store the full task object
-  function handleDragStart(event) { 
+  // Handlers for Drag Events
+  const handleDragStart = (event) => {
     const { active } = event;
     setActiveItem(active.data.current.data);
-  }
+  };
 
-  function handleDragOver(event) {
+  const handleDragOver = (event) => {
     const { active, over } = event;
     if (!over) return;
 
-    // If dragging over a container rather than a task, skip reordering logic
-    if (over.id === 'box1id' || over.id === 'box2id') return;
+    // Dragging over a column box (empty area)
+    if (over?.data?.current?.type === 'box') {
+      const activeCategory = active?.data?.current?.data?.category;
+      if (over.id === activeCategory) return;
 
+      moveTaskBetweenColumns(
+        getColumnState(activeCategory), setColumnState(activeCategory),
+        getColumnState(over.id), setColumnState(over.id),
+        active.id, over.id, over.id
+      );
+      return;
+    }
+
+    // Dragging over a task (within the same or different column)
     if (active.id === over.id) return;
 
     const sourceTask = findTaskById(active.id);
     const targetTask = findTaskById(over.id);
     if (!sourceTask || !targetTask) return;
 
-    // If same category, reorder within the same box
     if (sourceTask.category === targetTask.category) {
-      if (sourceTask.category === 'A') {
-        reorderWithinBox(boxA, setBoxA, active.id, over.id);
-      } else if (sourceTask.category === 'B') {
-        reorderWithinBox(boxB, setBoxB, active.id, over.id);
-      }
+      reorderWithinColumn(
+        getColumnState(sourceTask.category), setColumnState(sourceTask.category),
+        active.id, over.id
+      );
     } else {
-      // Move between boxes and update the task's category accordingly
-      if (sourceTask.category === 'A' && targetTask.category === 'B') {
-        moveBetweenBoxes(boxA, setBoxA, boxB, setBoxB, active.id, over.id, 'B');
-      } else if (sourceTask.category === 'B' && targetTask.category === 'A') {
-        moveBetweenBoxes(boxB, setBoxB, boxA, setBoxA, active.id, over.id, 'A');
-      }
+      moveTaskBetweenColumns(
+        getColumnState(sourceTask.category), setColumnState(sourceTask.category),
+        getColumnState(targetTask.category), setColumnState(targetTask.category),
+        active.id, over.id, targetTask.category
+      );
     }
-  }
+  };
 
-  function handleDragEnd(event) {
+  const handleDragEnd = () => {
+    // console.log(todo, inprogress, done);
+    console.log(todoIds, inprogressIds, doneIds);
     setActiveItem(null);
-  }
+  };
+
+  // Helper function to get column state and set column state
+  const getColumnState = (category) => {
+    switch (category) {
+      case 'todo': return todo;
+      case 'inprogress': return inprogress;
+      case 'done': return done;
+      default: return [];
+    }
+  };
+
+  const setColumnState = (category) => {
+    switch (category) {
+      case 'todo': return setTodo;
+      case 'inprogress': return setInprogress;
+      case 'done': return setDone;
+      default: return () => {};
+    }
+  };
 
   return (
     <div className="flex justify-center space-x-8 p-8">
@@ -134,31 +183,25 @@ function App() {
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        {/* Box A */}
-        <SortableContext
-          items={boxAIds}
-          strategy={verticalListSortingStrategy}
-        >
-          <Column id="box1id" box={boxA} />
+        {/* Todo Column */}
+        <SortableContext items={todoIds} strategy={verticalListSortingStrategy}>
+          <Column id="todo" box={todo} setBox={setTodo} />
         </SortableContext>
 
-        {/* Box B */}
-        <SortableContext
-          items={boxBIds}
-          strategy={verticalListSortingStrategy}
-        >
-          <Column id="box2id" box={boxB} />
+        {/* In Progress Column */}
+        <SortableContext items={inprogressIds} strategy={verticalListSortingStrategy}>
+          <Column id="inprogress" box={inprogress} setBox={setInprogress} />
         </SortableContext>
 
+        {/* Done Column */}
+        <SortableContext items={doneIds} strategy={verticalListSortingStrategy}>
+          <Column id="done" box={done} setBox={setDone}/>
+        </SortableContext>
+
+        {/* Drag Overlay */}
         {createPortal(
           <DragOverlay>
-            {activeItem && (
-              <SortableItem
-                id={activeItem.id}
-                title={activeItem.title}
-                category={activeItem.category}
-              />
-            )}
+            {activeItem && <SortableItem id={activeItem.id} title={activeItem.title} category={activeItem.category} />}
           </DragOverlay>,
           document.body
         )}

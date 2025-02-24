@@ -17,7 +17,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { SortableItem } from './SortableItem';
-import Column from './assets/components/Column';
+import Column from './components/Column';
 import { createPortal } from 'react-dom';
 
 function App() {
@@ -84,26 +84,27 @@ function App() {
     sourceColumn, setSourceColumn, targetColumn, setTargetColumn,
     activeId, overId, newCategory
   ) => {
-    const activeIndex = sourceColumn.findIndex(item => item.id === activeId);
-    if (activeIndex === -1) return;
-    const task = sourceColumn[activeIndex];
-    const updatedTask = { ...task, category: newCategory };
-
-    // Remove task from source column
-    setSourceColumn(prev => prev.filter(item => item.id !== activeId));
-
-    // Add task to the target column
-    const overIndex = targetColumn.findIndex(item => item.id === overId);
+    if (!sourceColumn.some(task => task.id === activeId)) return; // Prevent redundant updates
+  
+    setSourceColumn(prev => {
+      const updatedSource = prev.filter(task => task.id !== activeId);
+      return updatedSource;
+    });
+  
     setTargetColumn(prev => {
-      const next = [...prev];
+      if (prev.some(task => task.id === activeId)) return prev; // Avoid unnecessary state update
+      const updatedTask = { ...findTaskById(activeId), category: newCategory };
+      const overIndex = prev.findIndex(task => task.id === overId);
+      const updatedTarget = [...prev];
       if (overIndex === -1) {
-        next.push(updatedTask);
+        updatedTarget.push(updatedTask);
       } else {
-        next.splice(overIndex, 0, updatedTask);
+        updatedTarget.splice(overIndex, 0, updatedTask);
       }
-      return next;
+      return updatedTarget;
     });
   };
+  
 
   // Handlers for Drag Events
   const handleDragStart = (event) => {
